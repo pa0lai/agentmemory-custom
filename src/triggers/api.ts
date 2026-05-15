@@ -1,6 +1,9 @@
 import type { ISdk, ApiRequest } from "iii-sdk";
-import type { Session, CompressedObservation, HookPayload } from "../types.js";
-import { KV } from "../state/schema.js";
+import { existsSync } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { basename, join, relative, resolve } from "node:path";
+import type { Session, CompressedObservation, HookPayload, Memory, GraphNode, GraphEdge } from "../types.js";
+import { KV, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
@@ -16,12 +19,48 @@ import {
   isContextInjectionEnabled,
   detectEmbeddingProvider,
   detectLlmProviderKind,
+  getEnvVar,
 } from "../config.js";
 
 type Response = {
   status_code: number;
   headers?: Record<string, string>;
   body: unknown;
+};
+
+type AskContextItem = {
+  id: string;
+  title: string;
+  content: string;
+  score?: number;
+  timestamp?: string;
+};
+
+type GraphContextNode = {
+  id?: string;
+  name?: string;
+  type?: string;
+  properties?: Record<string, unknown>;
+};
+
+type GraphContextEdge = {
+  id?: string;
+  type?: string;
+  sourceNodeId?: string;
+  targetNodeId?: string;
+  weight?: number;
+};
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+type MarkdownDoc = {
+  path: string;
+  title: string;
+  size: number;
+  updatedAt: string;
 };
 
 function parseOptionalInt(raw: unknown): number | undefined {
@@ -109,6 +148,726 @@ function parseOptionalPositiveInt(value: unknown): number | undefined | null {
   if (parsed === undefined || parsed === null) return parsed;
   if (!Number.isInteger(parsed) || parsed < 1) return null;
   return parsed;
+}
+
+function clipText(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars)}\n[truncated]`;
+}
+
+function renderAskSystemPrompt(): string {
+  return [
+    "You answer questions using agentmemory retrieval context.",
+    "Ground your answer in the provided memories and graph context.",
+    "If the context is thin, say what is missing instead of inventing details.",
+    "Use the user's language unless they ask otherwise.",
+    "When useful, cite sources inline as [M1], [M2], or [G1].",
+  ].join("\n");
+}
+
+function renderAskUserPrompt(opts: {
+  question: string;
+  memories: AskContextItem[];
+  graphNodes: Array<{ id?: string; name?: string; type?: string; properties?: Record<string, unknown> }>;
+  graphEdges: Array<{ id?: string; type?: string; sourceNodeId?: string; targetNodeId?: string; weight?: number }>;
+}): string {
+  const memoryBlock =
+    opts.memories.length > 0
+      ? opts.memories
+          .map(
+            (m, i) =>
+              `[M${i + 1}] ${m.title}\n` +
+              `id: ${m.id}${m.score !== undefined ? ` score: ${m.score}` : ""}\n` +
+              clipText(m.content, 1800),
+          )
+          .join("\n\n")
+      : "No retrieved memories.";
+
+  const graphBlock =
+    opts.graphNodes.length > 0
+      ? opts.graphNodes
+          .slice(0, 30)
+          .map((n, i) => {
+            const props = n.properties ? JSON.stringify(n.properties).slice(0, 500) : "{}";
+            return `[G${i + 1}] ${n.name ?? n.id} (${n.type ?? "node"}) ${props}`;
+          })
+          .join("\n")
+      : "No matching graph nodes.";
+
+  const edgeBlock =
+    opts.graphEdges.length > 0
+      ? opts.graphEdges
+          .slice(0, 30)
+          .map(
+            (e) =>
+              `- ${e.sourceNodeId} -[${e.type ?? "related"}${e.weight !== undefined ? `:${e.weight}` : ""}]-> ${e.targetNodeId}`,
+          )
+          .join("\n")
+      : "No matching graph edges.";
+
+  return [
+    `Question:\n${opts.question}`,
+    "",
+    "Retrieved memories:",
+    memoryBlock,
+    "",
+    "Knowledge graph nodes:",
+    graphBlock,
+    "",
+    "Knowledge graph edges:",
+    edgeBlock,
+    "",
+    "Answer directly. Include concise citations to memory or graph labels when they support claims.",
+  ].join("\n");
+}
+
+function renderChatUserPrompt(opts: {
+  messages: ChatMessage[];
+  memories: AskContextItem[];
+  graphNodes: Array<{ id?: string; name?: string; type?: string; properties?: Record<string, unknown> }>;
+  graphEdges: Array<{ id?: string; type?: string; sourceNodeId?: string; targetNodeId?: string; weight?: number }>;
+}): string {
+  const transcript = opts.messages
+    .slice(-12)
+    .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
+    .join("\n\n");
+  const lastQuestion =
+    [...opts.messages].reverse().find((m) => m.role === "user")?.content || "";
+  return [
+    "Conversation:",
+    transcript,
+    "",
+    renderAskUserPrompt({
+      question: lastQuestion,
+      memories: opts.memories,
+      graphNodes: opts.graphNodes,
+      graphEdges: opts.graphEdges,
+    }),
+    "",
+    "Reply as the assistant in the conversation. Keep continuity with earlier turns.",
+  ].join("\n");
+}
+
+const IMPORTED_MARKDOWN_DIR = resolve(process.cwd(), "imported_markdown");
+
+async function walkMarkdownDocs(dir: string): Promise<MarkdownDoc[]> {
+  if (!existsSync(dir)) return [];
+  const out: MarkdownDoc[] = [];
+  async function walk(current: string): Promise<void> {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const abs = join(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(abs);
+        continue;
+      }
+      if (!/\.(md|markdown)$/i.test(entry.name)) continue;
+      const st = await stat(abs);
+      const rel = relative(dir, abs);
+      out.push({
+        path: rel,
+        title: basename(entry.name).replace(/\.(md|markdown)$/i, ""),
+        size: st.size,
+        updatedAt: st.mtime.toISOString(),
+      });
+    }
+  }
+  await walk(dir);
+  return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function resolveImportedMarkdownPath(relPath: string): string | null {
+  const abs = resolve(IMPORTED_MARKDOWN_DIR, relPath);
+  if (
+    abs !== IMPORTED_MARKDOWN_DIR &&
+    !abs.startsWith(`${IMPORTED_MARKDOWN_DIR}/`)
+  ) {
+    return null;
+  }
+  if (!/\.(md|markdown)$/i.test(abs)) return null;
+  return abs;
+}
+
+function memoryToAskContext(memory: Memory, score?: number): AskContextItem {
+  return {
+    id: memory.id,
+    title: memory.title,
+    content: memory.content,
+    score,
+    timestamp: memory.updatedAt || memory.createdAt,
+  };
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[“”‘’"'`]/g, "")
+    .replace(/[？?！!。.,，:：;；()（）[\]{}<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildSearchNeedles(question: string): { phrases: string[]; terms: string[] } {
+  const normalized = normalizeSearchText(question);
+  const stripped = normalized
+    .replace(/請(?:簡短|簡單|詳細)?回答/g, " ")
+    .replace(/(?:是什麼|在講什麼|講什麼|內容是什麼|內容|介紹一下|摘要一下)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const phrases = Array.from(
+    new Set([normalized, stripped].filter((part) => part.length >= 2)),
+  );
+  const rawTerms = stripped
+    .split(/[^0-9a-z\u4e00-\u9fff._-]+/i)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2);
+  const cjkChunks = rawTerms.flatMap((term) => {
+    if (!/[\u4e00-\u9fff]/.test(term) || term.length <= 4) return [term];
+    const chunks: string[] = [term];
+    for (let size = 2; size <= Math.min(6, term.length); size += 1) {
+      for (let i = 0; i <= term.length - size; i += 1) {
+        chunks.push(term.slice(i, i + size));
+      }
+    }
+    return chunks;
+  });
+  const terms = Array.from(new Set(cjkChunks)).sort((a, b) => b.length - a.length);
+  return { phrases, terms };
+}
+
+function scoreMemoryLexicalMatch(
+  memory: Memory | AskContextItem,
+  needles: { phrases: string[]; terms: string[] },
+): number {
+  const title = normalizeSearchText(memory.title || "");
+  const content = normalizeSearchText(memory.content || "");
+  const fileText = "files" in memory
+    ? normalizeSearchText((memory.files || []).join(" "))
+    : "";
+  const conceptText = "concepts" in memory
+    ? normalizeSearchText((memory.concepts || []).join(" "))
+    : "";
+  const filenameMatch = content.match(/imported readpaper markdown:\s+([^\n]+)/i);
+  const importedFile = normalizeSearchText(filenameMatch?.[1] || "");
+  let score = 0;
+
+  for (const phrase of needles.phrases) {
+    if (title.includes(phrase)) score += 140;
+    if (importedFile.includes(phrase)) score += 220;
+    if (fileText.includes(phrase)) score += 180;
+    if (content.includes(phrase)) score += 90;
+    if (conceptText.includes(phrase)) score += 40;
+  }
+
+  for (const term of needles.terms) {
+    if (title.includes(term)) score += 30 + Math.min(term.length, 12);
+    if (importedFile.includes(term)) score += 60 + Math.min(term.length, 18);
+    if (fileText.includes(term)) score += 40 + Math.min(term.length, 12);
+    if (content.includes(term)) score += 15 + Math.min(term.length, 10);
+    if (conceptText.includes(term)) score += 8;
+  }
+
+  return score;
+}
+
+type ParsedPaperMemory = {
+  fileName: string;
+  filePath?: string;
+  paperTitle: string;
+  arxivId?: string;
+  sourceUrl?: string;
+  sourceObservationIds: string[];
+  aliases: string[];
+  memoryId: string;
+};
+
+function derivePaperTitleFromFileName(fileName: string): string {
+  return fileName
+    .replace(/\.(md|markdown)$/i, "")
+    .replace(/^\d+_/, "")
+    .replace(/^\d+\s+/, "")
+    .replace(/^\d{4}\.\d{4,5}v\d+_?/i, "")
+    .replace(/_/g, " ")
+    .trim();
+}
+
+function parseImportedPaperMemory(memory: Memory): ParsedPaperMemory | null {
+  const explicitFile = memory.content.match(/Imported ReadPaper Markdown:\s+([^\n]+)/i)?.[1]?.trim();
+  const filePath = (memory.files || []).find((file) =>
+    /readpaper_md/i.test(file) || /\.(md|markdown)$/i.test(file),
+  );
+  const fileName = explicitFile || (filePath ? basename(filePath) : "");
+  const headingTitle = memory.content.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const arxivId = memory.content.match(/\b\d{4}\.\d{4,5}v\d+\b/i)?.[0];
+  const sourceUrl = memory.content.match(/source:\s*(https?:\/\/\S+)/i)?.[1]?.trim();
+  const derivedTitle = fileName ? derivePaperTitleFromFileName(fileName) : "";
+  const paperTitle = headingTitle || derivedTitle || memory.title.trim();
+  if (!fileName || !paperTitle) return null;
+
+  const aliasCandidates = [
+    paperTitle,
+    derivedTitle,
+    fileName.replace(/\.(md|markdown)$/i, ""),
+    arxivId || "",
+    memory.title,
+  ].map((value) => value.trim()).filter(Boolean);
+
+  return {
+    fileName,
+    filePath,
+    paperTitle,
+    arxivId: arxivId || undefined,
+    sourceUrl: sourceUrl || undefined,
+    sourceObservationIds: memory.sourceObservationIds?.length ? memory.sourceObservationIds : [memory.id],
+    aliases: Array.from(new Set(aliasCandidates)),
+    memoryId: memory.id,
+  };
+}
+
+async function upsertGraphNode(
+  kv: StateKV,
+  draft: Pick<GraphNode, "type" | "name" | "properties" | "sourceObservationIds"> & Partial<GraphNode>,
+): Promise<GraphNode> {
+  const existingNodes = await kv.list<GraphNode>(KV.graphNodes);
+  const existing = existingNodes.find((node) => node.type === draft.type && node.name === draft.name);
+  const now = new Date().toISOString();
+  if (existing) {
+    const merged: GraphNode = {
+      ...existing,
+      properties: { ...existing.properties, ...draft.properties },
+      sourceObservationIds: Array.from(new Set([
+        ...(existing.sourceObservationIds || []),
+        ...(draft.sourceObservationIds || []),
+      ])),
+      aliases: Array.from(new Set([...(existing.aliases || []), ...(draft.aliases || [])])),
+      updatedAt: now,
+      stale: false,
+    };
+    await kv.set(KV.graphNodes, existing.id, merged);
+    return merged;
+  }
+
+  const created: GraphNode = {
+    id: draft.id || generateId("gn"),
+    type: draft.type,
+    name: draft.name,
+    properties: draft.properties || {},
+    sourceObservationIds: draft.sourceObservationIds || [],
+    aliases: draft.aliases || [],
+    createdAt: draft.createdAt || now,
+    updatedAt: now,
+    stale: false,
+  };
+  await kv.set(KV.graphNodes, created.id, created);
+  return created;
+}
+
+async function upsertGraphEdge(
+  kv: StateKV,
+  draft: Pick<GraphEdge, "type" | "sourceNodeId" | "targetNodeId" | "weight" | "sourceObservationIds">,
+): Promise<GraphEdge> {
+  const existingEdges = await kv.list<GraphEdge>(KV.graphEdges);
+  const existing = existingEdges.find((edge) =>
+    edge.type === draft.type &&
+    edge.sourceNodeId === draft.sourceNodeId &&
+    edge.targetNodeId === draft.targetNodeId,
+  );
+  const now = new Date().toISOString();
+  if (existing) {
+    const merged: GraphEdge = {
+      ...existing,
+      weight: Math.max(existing.weight || 0, draft.weight || 0),
+      sourceObservationIds: Array.from(new Set([
+        ...(existing.sourceObservationIds || []),
+        ...(draft.sourceObservationIds || []),
+      ])),
+      stale: false,
+    };
+    await kv.set(KV.graphEdges, existing.id, merged);
+    return merged;
+  }
+
+  const created: GraphEdge = {
+    id: generateId("ge"),
+    type: draft.type,
+    sourceNodeId: draft.sourceNodeId,
+    targetNodeId: draft.targetNodeId,
+    weight: draft.weight,
+    sourceObservationIds: draft.sourceObservationIds,
+    createdAt: now,
+    isLatest: true,
+    stale: false,
+  };
+  await kv.set(KV.graphEdges, created.id, created);
+  return created;
+}
+
+async function buildPaperGraphFromMemories(
+  kv: StateKV,
+  memories: Memory[],
+): Promise<{
+  papers: number;
+  fileNodes: number;
+  paperNodes: number;
+  sourceNodes: number;
+  edges: number;
+}> {
+  let papers = 0;
+  let fileNodes = 0;
+  let paperNodes = 0;
+  let sourceNodes = 0;
+  let edges = 0;
+
+  for (const memory of memories) {
+    const parsed = parseImportedPaperMemory(memory);
+    if (!parsed) continue;
+    papers += 1;
+
+    const fileNode = await upsertGraphNode(kv, {
+      type: "file",
+      name: parsed.fileName,
+      aliases: parsed.filePath ? [parsed.filePath] : [],
+      properties: {
+        path: parsed.filePath || parsed.fileName,
+        memoryId: parsed.memoryId,
+        imported: "readpaper",
+      },
+      sourceObservationIds: parsed.sourceObservationIds,
+    });
+    fileNodes += 1;
+
+    const paperNode = await upsertGraphNode(kv, {
+      type: "paper",
+      name: parsed.paperTitle,
+      aliases: parsed.aliases,
+      properties: {
+        arxiv_id: parsed.arxivId || null,
+        source: parsed.sourceUrl || null,
+        memoryId: parsed.memoryId,
+        fileName: parsed.fileName,
+      },
+      sourceObservationIds: parsed.sourceObservationIds,
+    });
+    paperNodes += 1;
+
+    await upsertGraphEdge(kv, {
+      type: "documents",
+      sourceNodeId: fileNode.id,
+      targetNodeId: paperNode.id,
+      weight: 1,
+      sourceObservationIds: parsed.sourceObservationIds,
+    });
+    edges += 1;
+
+    if (parsed.arxivId) {
+      const arxivNode = await upsertGraphNode(kv, {
+        type: "source",
+        name: `arXiv:${parsed.arxivId}`,
+        aliases: [parsed.arxivId, `https://arxiv.org/abs/${parsed.arxivId}`],
+        properties: {
+          provider: "arxiv",
+          arxiv_id: parsed.arxivId,
+          url: `https://arxiv.org/abs/${parsed.arxivId}`,
+        },
+        sourceObservationIds: parsed.sourceObservationIds,
+      });
+      sourceNodes += 1;
+      await upsertGraphEdge(kv, {
+        type: "references",
+        sourceNodeId: paperNode.id,
+        targetNodeId: arxivNode.id,
+        weight: 0.95,
+        sourceObservationIds: parsed.sourceObservationIds,
+      });
+      edges += 1;
+    }
+
+    if (parsed.sourceUrl) {
+      const sourceNode = await upsertGraphNode(kv, {
+        type: "source",
+        name: parsed.sourceUrl,
+        aliases: [],
+        properties: {
+          provider: "web",
+          url: parsed.sourceUrl,
+        },
+        sourceObservationIds: parsed.sourceObservationIds,
+      });
+      sourceNodes += 1;
+      await upsertGraphEdge(kv, {
+        type: "hosted_at",
+        sourceNodeId: paperNode.id,
+        targetNodeId: sourceNode.id,
+        weight: 0.85,
+        sourceObservationIds: parsed.sourceObservationIds,
+      });
+      edges += 1;
+    }
+  }
+
+  return { papers, fileNodes, paperNodes, sourceNodes, edges };
+}
+
+function memoriesToObservations(memories: Memory[]): CompressedObservation[] {
+  return memories
+    .filter((m) => m.isLatest !== false && m.title && m.content)
+    .map((m) => ({
+      id: m.id,
+      sessionId: m.sessionIds[0] ?? "memory",
+      timestamp: m.updatedAt || m.createdAt,
+      type: "decision",
+      title: m.title,
+      facts: [m.content],
+      narrative: m.content,
+      concepts: m.concepts || [],
+      files: m.files || [],
+      importance: m.strength || 7,
+    }));
+}
+
+async function retrieveAskContext(
+  sdk: ISdk,
+  kv: StateKV,
+  question: string,
+  limit: number,
+): Promise<AskContextItem[]> {
+  const compact = await sdk.trigger({
+    function_id: "mem::smart-search",
+    payload: { query: question, limit },
+  }) as {
+    results?: Array<{ obsId: string; sessionId?: string; score?: number; title?: string; timestamp?: string }>;
+  };
+
+  const expandIds = (compact.results || []).map((r) => ({
+    obsId: r.obsId,
+    sessionId: r.sessionId,
+  }));
+  const expanded = expandIds.length > 0
+    ? await sdk.trigger({
+        function_id: "mem::smart-search",
+        payload: { expandIds },
+      }) as {
+        results?: Array<{
+          obsId: string;
+          observation?: CompressedObservation;
+        }>;
+      }
+    : { results: [] };
+
+  const scoreById = new Map(
+    (compact.results || []).map((r) => [r.obsId, r.score] as const),
+  );
+  const expandedMemories: AskContextItem[] = (expanded.results || [])
+    .map((item) => item.observation)
+    .filter((o): o is CompressedObservation => Boolean(o))
+    .map((o) => ({
+      id: o.id,
+      title: o.title,
+      content: o.narrative || o.facts?.join("\n") || "",
+      score: scoreById.get(o.id),
+      timestamp: o.timestamp,
+    }));
+  const expandedIds = new Set(expandedMemories.map((m) => m.id));
+  const remembered = await Promise.all(
+    (compact.results || [])
+      .filter((r) => !expandedIds.has(r.obsId))
+      .map(async (r): Promise<AskContextItem | null> => {
+        const memory = await kv.get<Memory>(KV.memories, r.obsId).catch(() => null);
+        return memory ? memoryToAskContext(memory, r.score) : null;
+      }),
+  );
+  const initial = [
+    ...expandedMemories,
+    ...remembered.filter((m): m is AskContextItem => Boolean(m)),
+  ];
+  const needles = buildSearchNeedles(question);
+  const scoredInitial = initial
+    .map((item) => ({ item, lexicalScore: scoreMemoryLexicalMatch(item, needles) }))
+    .sort((a, b) => b.lexicalScore - a.lexicalScore);
+  const hasStrongLexicalMatch = (scoredInitial[0]?.lexicalScore || 0) >= 120;
+  const existingIds = new Set(initial.map((m) => m.id));
+  const lexicalFallback = (await kv.list<Memory>(KV.memories))
+    .filter((m) => m.isLatest !== false && !existingIds.has(m.id))
+    .map((m) => ({ memory: m, lexicalScore: scoreMemoryLexicalMatch(m, needles) }))
+    .filter((entry) => entry.lexicalScore > 0)
+    .sort((a, b) => b.lexicalScore - a.lexicalScore)
+    .slice(0, limit)
+    .map((entry) => memoryToAskContext(entry.memory, entry.lexicalScore));
+  const rankedInitial = scoredInitial.map((entry) => ({
+    ...entry.item,
+    score: entry.item.score ?? entry.lexicalScore,
+  }));
+  const merged = [
+    ...(hasStrongLexicalMatch ? rankedInitial : lexicalFallback),
+    ...(hasStrongLexicalMatch ? lexicalFallback : rankedInitial),
+  ];
+  const deduped: AskContextItem[] = [];
+  const seen = new Set<string>();
+  for (const item of merged) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    deduped.push(item);
+    if (deduped.length >= limit) break;
+  }
+  return deduped;
+}
+
+async function retrieveGraphContext(
+  sdk: ISdk,
+  kv: StateKV,
+  question: string,
+  includeGraph: boolean,
+  memories: AskContextItem[] = [],
+): Promise<{
+  nodes: GraphContextNode[];
+  edges: GraphContextEdge[];
+}> {
+  if (!includeGraph || !isGraphExtractionEnabled()) return { nodes: [], edges: [] };
+  try {
+    const graph = await sdk.trigger({
+      function_id: "mem::graph-query",
+      payload: { query: question, maxDepth: 2 },
+    }) as { nodes?: unknown[]; edges?: unknown[] };
+    const direct = {
+      nodes: Array.isArray(graph.nodes)
+        ? graph.nodes as GraphContextNode[]
+        : [],
+      edges: Array.isArray(graph.edges)
+        ? graph.edges as GraphContextEdge[]
+        : [],
+    };
+    if (direct.nodes.length > 0) return direct;
+  } catch {
+    // Fall through to local fuzzy fallback below.
+  }
+
+  const allNodes = (await kv.list<GraphNode>(KV.graphNodes).catch(() => []))
+    .filter((n) => !n.stale);
+  const allEdges = (await kv.list<GraphEdge>(KV.graphEdges).catch(() => []))
+    .filter((e) => !e.stale);
+  if (allNodes.length === 0) return { nodes: [], edges: [] };
+
+  const needles = buildSearchNeedles(question);
+  const fileHints = Array.from(new Set(
+    memories.flatMap((m) => {
+      const arxivMatches = Array.from(m.content.matchAll(/\b\d{4}\.\d{4,5}v\d+\b/gi)).map((x) => x[0].toLowerCase());
+      const fileMatches = Array.from(m.content.matchAll(/imported_markdown\/[^\s)\]]+/gi)).map((x) => basename(x[0]).toLowerCase());
+      return [...arxivMatches, ...fileMatches];
+    }),
+  ));
+
+  const matchingNodes = allNodes.filter((node) => {
+    const haystacks = [
+      normalizeSearchText(node.name),
+      ...Object.values(node.properties || {})
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => normalizeSearchText(v)),
+    ];
+    const joined = haystacks.join(" ");
+    if (needles.phrases.some((phrase) => joined.includes(phrase))) return true;
+    if (needles.terms.some((term) => joined.includes(term))) return true;
+    if (fileHints.some((hint) => joined.includes(normalizeSearchText(hint)))) return true;
+    return false;
+  }).slice(0, 24);
+
+  const nodeIds = new Set(matchingNodes.map((n) => n.id));
+  const relatedEdges = allEdges.filter(
+    (e) => nodeIds.has(e.sourceNodeId) || nodeIds.has(e.targetNodeId),
+  ).slice(0, 48);
+  if (matchingNodes.length > 0) return { nodes: matchingNodes, edges: relatedEdges };
+  return synthesizeGraphContextFromMemories(memories);
+}
+
+function synthesizeGraphContextFromMemories(
+  memories: AskContextItem[],
+): { nodes: GraphContextNode[]; edges: GraphContextEdge[] } {
+  const nodes: GraphContextNode[] = [];
+  const edges: GraphContextEdge[] = [];
+  const seen = new Set<string>();
+  for (const memory of memories.slice(0, 8)) {
+    const sourceMatch = memory.content.match(/source:\s*(https?:\/\/\S+)/i);
+    const titleMatch = memory.content.match(/^#\s+(.+)$/m);
+    const fileMatch = memory.content.match(/Imported ReadPaper Markdown:\s+([^\n]+)/i);
+    const arxivMatch = memory.content.match(/\b\d{4}\.\d{4,5}v\d+\b/i);
+
+    const fileName = fileMatch?.[1]?.trim();
+    const paperTitle = titleMatch?.[1]?.trim();
+    const paperId = arxivMatch?.[0]?.toLowerCase();
+
+    if (fileName) {
+      const fileNodeId = `mem-file:${fileName}`;
+      if (!seen.has(fileNodeId)) {
+        seen.add(fileNodeId);
+        nodes.push({
+          id: fileNodeId,
+          name: fileName,
+          type: "file",
+          properties: { memoryId: memory.id },
+        });
+      }
+      if (paperTitle) {
+        const paperNodeId = `mem-paper:${paperId || paperTitle}`;
+        if (!seen.has(paperNodeId)) {
+          seen.add(paperNodeId);
+          nodes.push({
+            id: paperNodeId,
+            name: paperTitle,
+            type: "paper",
+            properties: {
+              arxiv_id: paperId,
+              source: sourceMatch?.[1] || null,
+              memoryId: memory.id,
+            },
+          });
+        }
+        edges.push({
+          id: `edge:${fileNodeId}:${paperNodeId}`,
+          type: "documents",
+          sourceNodeId: fileNodeId,
+          targetNodeId: paperNodeId,
+        });
+      }
+    }
+  }
+  return { nodes, edges };
+}
+
+function requireSummarizer(
+  provider: ResilientProvider | { circuitState?: unknown } | undefined,
+): (ResilientProvider & { summarize: (system: string, user: string) => Promise<string> }) | Response {
+  if (!provider || !("summarize" in provider)) {
+    return {
+      status_code: 503,
+      body: {
+        error: "LLM provider not available",
+        enableHow: "Set an LLM provider key such as GEMINI_API_KEY and restart.",
+      },
+    };
+  }
+  return provider as ResilientProvider & { summarize: (system: string, user: string) => Promise<string> };
+}
+
+function isResponse(value: unknown): value is Response {
+  return Boolean(value && typeof value === "object" && "status_code" in value);
+}
+
+async function latestMemories(kv: StateKV, limit = 40): Promise<Memory[]> {
+  const memories = await kv.list<Memory>(KV.memories);
+  return memories
+    .filter((m) => m.isLatest !== false)
+    .sort((a, b) => (b.updatedAt || b.createdAt || "").localeCompare(a.updatedAt || a.createdAt || ""))
+    .slice(0, limit);
+}
+
+function renderMemoryDigest(memories: Memory[], maxChars = 1600): string {
+  if (memories.length === 0) return "No memories available.";
+  return memories
+    .map((m, i) => [
+      `[M${i + 1}] ${m.title}`,
+      `id: ${m.id}`,
+      `files: ${(m.files || []).slice(0, 6).join(", ") || "none"}`,
+      clipText(m.content, maxChars),
+    ].join("\n"))
+    .join("\n\n");
 }
 
 export function registerApiTriggers(
@@ -857,6 +1616,399 @@ export function registerApiTriggers(
     type: "http",
     function_id: "api::smart-search",
     config: { api_path: "/agentmemory/smart-search", http_method: "POST" },
+  });
+
+  sdk.registerFunction(
+    "api::ask",
+    async (
+      req: ApiRequest<{
+        question?: string;
+        query?: string;
+        limit?: number;
+        includeGraph?: boolean;
+      }>,
+    ): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const question = asNonEmptyString(req.body?.question ?? req.body?.query);
+      if (!question) {
+        return { status_code: 400, body: { error: "question is required" } };
+      }
+      const summarizer = requireSummarizer(provider);
+      if (isResponse(summarizer)) return summarizer;
+
+      const parsedLimit = parseOptionalPositiveInt(req.body?.limit);
+      if (parsedLimit === null) {
+        return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      }
+      const limit = Math.min(parsedLimit ?? 8, 20);
+
+      const memories = await retrieveAskContext(sdk, kv, question, limit);
+      const graph = await retrieveGraphContext(sdk, kv, question, req.body?.includeGraph !== false, memories);
+      const answer = await summarizer.summarize(
+        renderAskSystemPrompt(),
+        renderAskUserPrompt({
+          question,
+          memories,
+          graphNodes: graph.nodes,
+          graphEdges: graph.edges,
+        }),
+      );
+
+      return {
+        status_code: 200,
+        body: {
+          answer,
+          memories,
+          graph,
+          model: summarizer.name,
+        },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::ask",
+    config: { api_path: "/agentmemory/ask", http_method: "POST" },
+  });
+
+  sdk.registerFunction(
+    "api::chat",
+    async (
+      req: ApiRequest<{
+        messages?: ChatMessage[];
+        question?: string;
+        limit?: number;
+        includeGraph?: boolean;
+      }>,
+    ): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const summarizer = requireSummarizer(provider);
+      if (isResponse(summarizer)) return summarizer;
+      const messages = Array.isArray(req.body?.messages)
+        ? req.body.messages
+            .filter((m): m is ChatMessage =>
+              Boolean(m) &&
+              (m.role === "user" || m.role === "assistant") &&
+              typeof m.content === "string" &&
+              m.content.trim().length > 0,
+            )
+            .map((m) => ({ role: m.role, content: m.content.trim() }))
+        : [];
+      const directQuestion = asNonEmptyString(req.body?.question);
+      if (directQuestion) messages.push({ role: "user", content: directQuestion });
+      const question = [...messages].reverse().find((m) => m.role === "user")?.content;
+      if (!question) {
+        return { status_code: 400, body: { error: "messages or question is required" } };
+      }
+      const parsedLimit = parseOptionalPositiveInt(req.body?.limit);
+      if (parsedLimit === null) {
+        return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      }
+      const limit = Math.min(parsedLimit ?? 8, 20);
+      const memories = await retrieveAskContext(sdk, kv, question, limit);
+      const graph = await retrieveGraphContext(sdk, kv, question, req.body?.includeGraph !== false, memories);
+      const answer = await summarizer.summarize(
+        renderAskSystemPrompt(),
+        renderChatUserPrompt({
+          messages,
+          memories,
+          graphNodes: graph.nodes,
+          graphEdges: graph.edges,
+        }),
+      );
+      return {
+        status_code: 200,
+        body: { answer, memories, graph, model: summarizer.name },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::chat",
+    config: { api_path: "/agentmemory/chat", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::documents",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const docs = await walkMarkdownDocs(IMPORTED_MARKDOWN_DIR);
+      const memories = await kv.list<Memory>(KV.memories);
+      const memoryCountByPath = new Map<string, number>();
+      for (const memory of memories) {
+        for (const file of memory.files || []) {
+          const normalized = file.replace(/^imported_markdown\//, "");
+          memoryCountByPath.set(normalized, (memoryCountByPath.get(normalized) || 0) + 1);
+        }
+      }
+      return {
+        status_code: 200,
+        body: {
+          root: IMPORTED_MARKDOWN_DIR,
+          documents: docs.map((doc) => ({
+            ...doc,
+            memoryCount: memoryCountByPath.get(doc.path) || 0,
+          })),
+        },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::documents",
+    config: { api_path: "/agentmemory/documents", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::document-read",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const relPath = asNonEmptyString(req.query_params?.["path"]);
+      if (!relPath) return { status_code: 400, body: { error: "path is required" } };
+      const abs = resolveImportedMarkdownPath(relPath);
+      if (!abs || !existsSync(abs)) return { status_code: 404, body: { error: "document not found" } };
+      const content = await readFile(abs, "utf8");
+      return { status_code: 200, body: { path: relPath, content } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::document-read",
+    config: { api_path: "/agentmemory/documents/read", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::document-summary",
+    async (req: ApiRequest<{ path?: string }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const summarizer = requireSummarizer(provider);
+      if (isResponse(summarizer)) return summarizer;
+      const relPath = asNonEmptyString(req.body?.path);
+      if (!relPath) return { status_code: 400, body: { error: "path is required" } };
+      const abs = resolveImportedMarkdownPath(relPath);
+      if (!abs || !existsSync(abs)) return { status_code: 404, body: { error: "document not found" } };
+      const content = await readFile(abs, "utf8");
+      const summary = await summarizer.summarize(
+        "You summarize research markdown for a user building a memory-assisted research system. Use Traditional Chinese.",
+        [
+          `File: ${relPath}`,
+          "",
+          clipText(content, 24000),
+          "",
+          "Return concise markdown with: 核心主張, 方法/證據, 重要細節, 限制, 可做的下一步實驗.",
+        ].join("\n"),
+      );
+      return { status_code: 200, body: { path: relPath, summary, model: summarizer.name } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::document-summary",
+    config: { api_path: "/agentmemory/documents/summary", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::graph-rebuild-from-memories",
+    async (req: ApiRequest<{ limit?: number }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      if (!isGraphExtractionEnabled()) return graphDisabledResponse();
+      const parsedLimit = parseOptionalPositiveInt(req.body?.limit);
+      if (parsedLimit === null) {
+        return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      }
+      const memories = await latestMemories(kv, Math.min(parsedLimit ?? 200, 1000));
+      const observations = memoriesToObservations(memories);
+      let totalCreated = 0;
+      const batches = [];
+      for (let i = 0; i < observations.length; i += 8) {
+        const batch = observations.slice(i, i + 8);
+        const result = await sdk.trigger({
+          function_id: "mem::graph-extract",
+          payload: { observations: batch },
+        }) as { nodesCreated?: number; edgesCreated?: number; nodes?: unknown[]; edges?: unknown[] };
+        totalCreated += (result.nodesCreated || 0) + (result.edgesCreated || 0);
+        batches.push(result);
+      }
+      const paperGraph = await buildPaperGraphFromMemories(kv, memories);
+      const stats = await sdk.trigger({ function_id: "mem::graph-stats", payload: {} }).catch(() => null);
+      return {
+        status_code: 200,
+        body: {
+          success: true,
+          memories: memories.length,
+          observations: observations.length,
+          batches: batches.length,
+          created: totalCreated,
+          deterministicPaperGraph: paperGraph,
+          stats,
+        },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::graph-rebuild-from-memories",
+    config: { api_path: "/agentmemory/graph/rebuild-from-memories", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::graph-build-papers",
+    async (req: ApiRequest<{ limit?: number }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const parsedLimit = parseOptionalPositiveInt(req.body?.limit);
+      if (parsedLimit === null) {
+        return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      }
+      const memories = await latestMemories(kv, Math.min(parsedLimit ?? 1000, 2000));
+      const result = await buildPaperGraphFromMemories(kv, memories);
+      const stats = await sdk.trigger({ function_id: "mem::graph-stats", payload: {} }).catch(() => null);
+      return {
+        status_code: 200,
+        body: {
+          success: true,
+          scannedMemories: memories.length,
+          ...result,
+          stats,
+        },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::graph-build-papers",
+    config: { api_path: "/agentmemory/graph/build-papers", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::index-status",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const docs = await walkMarkdownDocs(IMPORTED_MARKDOWN_DIR);
+      const memories = await kv.list<Memory>(KV.memories);
+      let graphStats: unknown = null;
+      try {
+        graphStats = await sdk.trigger({ function_id: "mem::graph-stats", payload: {} });
+      } catch {
+        graphStats = null;
+      }
+      return {
+        status_code: 200,
+        body: {
+          version: VERSION,
+          llmProvider: detectLlmProviderKind(),
+          model: getEnvVar("GEMINI_MODEL") || getEnvVar("ANTHROPIC_MODEL") || getEnvVar("OPENAI_MODEL") || provider?.name || "unknown",
+          embeddingProvider: detectEmbeddingProvider() ? "embeddings" : "none",
+          embeddingModel: getEnvVar("GEMINI_EMBEDDING_MODEL") || getEnvVar("OPENAI_EMBEDDING_MODEL") || getEnvVar("VOYAGE_EMBEDDING_MODEL") || "default",
+          embeddingDimensions: getEnvVar("GEMINI_EMBEDDING_DIMENSIONS") || null,
+          importedMarkdownRoot: IMPORTED_MARKDOWN_DIR,
+          documents: docs.length,
+          memories: memories.length,
+          latestMemories: memories.filter((m) => m.isLatest !== false).length,
+          graphStats,
+          flags: {
+            graphExtraction: isGraphExtractionEnabled(),
+            consolidation: isConsolidationEnabled(),
+            autoCompress: isAutoCompressEnabled(),
+            injectContext: isContextInjectionEnabled(),
+          },
+        },
+      };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::index-status",
+    config: { api_path: "/agentmemory/index/status", http_method: "GET" },
+  });
+
+  sdk.registerFunction("api::research-map",
+    async (req: ApiRequest<{ query?: string; limit?: number }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const summarizer = requireSummarizer(provider);
+      if (isResponse(summarizer)) return summarizer;
+      const query = asNonEmptyString(req.body?.query) || "research map";
+      const parsedLimit = parseOptionalPositiveInt(req.body?.limit);
+      if (parsedLimit === null) return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      const memories = query === "research map"
+        ? (await latestMemories(kv, Math.min(parsedLimit ?? 50, 120))).map((m) => memoryToAskContext(m))
+        : await retrieveAskContext(sdk, kv, query, Math.min(parsedLimit ?? 20, 60));
+      const map = await summarizer.summarize(
+        "You build research maps from memory snippets. Use Traditional Chinese and concise markdown.",
+        [
+          `Focus query: ${query}`,
+          "",
+          "Memory snippets:",
+          memories.map((m, i) => `[M${i + 1}] ${m.title}\n${clipText(m.content, 1400)}`).join("\n\n") || "No memories.",
+          "",
+          "Return: 主題群集, 已知結論, 缺口/矛盾, 建議閱讀順序, 下一步研究路線.",
+        ].join("\n"),
+      );
+      return { status_code: 200, body: { map, memories, model: summarizer.name } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::research-map",
+    config: { api_path: "/agentmemory/research-map", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::experiments",
+    async (req: ApiRequest<{ query?: string; limit?: number }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const summarizer = requireSummarizer(provider);
+      if (isResponse(summarizer)) return summarizer;
+      const query = asNonEmptyString(req.body?.query) || "experiment benchmark result dataset metric ablation";
+      const parsedLimit = parseOptionalPositiveInt(req.body?.limit);
+      if (parsedLimit === null) return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      const memories = await retrieveAskContext(sdk, kv, query, Math.min(parsedLimit ?? 24, 60));
+      const report = await summarizer.summarize(
+        "You extract experiment tracking information from research notes. Use Traditional Chinese markdown.",
+        [
+          "Retrieved notes:",
+          memories.map((m, i) => `[M${i + 1}] ${m.title}\n${clipText(m.content, 1500)}`).join("\n\n") || "No memories.",
+          "",
+          "Return a compact experiment tracker table with: 實驗/假設, 資料集, 方法/設定, 指標, 結果, 狀態, 下一步. Add open risks below.",
+        ].join("\n"),
+      );
+      return { status_code: 200, body: { report, memories, model: summarizer.name } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::experiments",
+    config: { api_path: "/agentmemory/experiments", http_method: "POST" },
+  });
+
+  sdk.registerFunction("api::suggestions",
+    async (req: ApiRequest<{ query?: string; limit?: number }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const summarizer = requireSummarizer(provider);
+      if (isResponse(summarizer)) return summarizer;
+      const query = asNonEmptyString(req.body?.query) || "open questions assumptions next steps";
+      const parsedLimit = parseOptionalPositiveInt(req.body?.limit);
+      if (parsedLimit === null) return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      const memories = await retrieveAskContext(sdk, kv, query, Math.min(parsedLimit ?? 20, 60));
+      const suggestions = await summarizer.summarize(
+        "You ask high-leverage reverse questions based on a user's research memory. Use Traditional Chinese markdown.",
+        [
+          "Memory context:",
+          memories.map((m, i) => `[M${i + 1}] ${m.title}\n${clipText(m.content, 1400)}`).join("\n\n") || renderMemoryDigest(await latestMemories(kv, 25), 1000),
+          "",
+          "Generate 10 sharp questions the user should answer next. Group by: 論文主張, 實驗設計, 資料/評估, 實作風險, 寫作/投稿.",
+        ].join("\n"),
+      );
+      return { status_code: 200, body: { suggestions, memories, model: summarizer.name } };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::suggestions",
+    config: { api_path: "/agentmemory/suggestions", http_method: "POST" },
   });
 
   sdk.registerFunction("api::timeline", 

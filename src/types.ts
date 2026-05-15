@@ -337,6 +337,8 @@ export interface StandaloneConfig {
 
 export type GraphNodeType =
   | "file"
+  | "paper"
+  | "source"
   | "function"
   | "concept"
   | "error"
@@ -363,6 +365,9 @@ export interface GraphNode {
 }
 
 export type GraphEdgeType =
+  | "documents"
+  | "references"
+  | "hosted_at"
   | "uses"
   | "imports"
   | "modifies"

@@ -4,18 +4,22 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
+import { createReadStream, existsSync } from "node:fs";
+import { extname, join, normalize, resolve } from "node:path";
 import { renderViewerDocument } from "./document.js";
 
 const ALLOWED_ORIGINS = (
   process.env.VIEWER_ALLOWED_ORIGINS ||
-  "http://localhost:3111,http://localhost:3113,http://127.0.0.1:3111,http://127.0.0.1:3113"
+  "*"
 )
   .split(",")
   .map((o) => o.trim());
 
 function corsHeaders(req: IncomingMessage): Record<string, string> {
   const origin = req.headers.origin || "";
-  const allowed = ALLOWED_ORIGINS.includes(origin)
+  const allowed = ALLOWED_ORIGINS.includes("*")
+    ? origin || "*"
+    : ALLOWED_ORIGINS.includes(origin)
     ? origin
     : ALLOWED_ORIGINS[0];
   return {
@@ -66,6 +70,8 @@ export function startViewerServer(
   restPort?: number,
 ): Server {
   const resolvedRestPort = restPort ?? port - 2;
+  const host = process.env.VIEWER_HOST || "127.0.0.1";
+  const katexRoot = normalize(resolve(process.cwd(), "node_modules", "katex", "dist"));
 
   const server = createServer(async (req, res) => {
     const raw = req.url || "/";
@@ -104,6 +110,29 @@ export function startViewerServer(
       return;
     }
 
+    if (method === "GET" && pathname.startsWith("/vendor/katex/")) {
+      const rel = pathname.slice("/vendor/katex/".length);
+      const filePath = normalize(join(katexRoot, rel));
+      if (!filePath.startsWith(katexRoot) || !existsSync(filePath)) {
+        res.writeHead(404, { "Content-Type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      const contentType =
+        extname(filePath) === ".css" ? "text/css; charset=utf-8" :
+        extname(filePath) === ".js" ? "application/javascript; charset=utf-8" :
+        extname(filePath) === ".woff2" ? "font/woff2" :
+        extname(filePath) === ".woff" ? "font/woff" :
+        extname(filePath) === ".ttf" ? "font/ttf" :
+        "application/octet-stream";
+      res.writeHead(200, {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=86400",
+      });
+      createReadStream(filePath).pipe(res);
+      return;
+    }
+
     try {
       await proxyToRestApi(resolvedRestPort, pathname, qs, method, req, res, secret);
     } catch (err) {
@@ -120,8 +149,9 @@ export function startViewerServer(
     }
   });
 
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`[agentmemory] Viewer: http://localhost:${port}`);
+  server.listen(port, host, () => {
+    const shownHost = host === "0.0.0.0" ? "localhost" : host;
+    console.log(`[agentmemory] Viewer: http://${shownHost}:${port}`);
   });
 
   return server;

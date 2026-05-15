@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>agentmemory viewer</title>
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
   <!-- Removed Google Fonts <link> in #323: the viewer CSP is strict
        (default-src 'none', style-src 'unsafe-inline', font-src 'self')
        and external stylesheets from fonts.googleapis.com were blocked,
@@ -352,6 +353,300 @@
     .btn-danger:hover { background: var(--accent); color: white; box-shadow: 3px 3px 0px 0px var(--border); }
     .btn-primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
     .btn-primary:hover { background: var(--ink-secondary); box-shadow: 3px 3px 0px 0px var(--ink-muted); }
+
+    .ask-shell {
+      max-width: 980px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .ask-panel {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    .ask-input {
+      width: 100%;
+      min-height: 132px;
+      resize: vertical;
+      box-sizing: border-box;
+      font: 15px var(--font-body);
+      line-height: 1.55;
+      padding: 12px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--ink);
+      outline: none;
+    }
+    .ask-input:focus {
+      border-color: var(--ink);
+      box-shadow: 3px 3px 0 0 var(--border);
+    }
+    .ask-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    .ask-examples {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 12px 0 0;
+    }
+    .ask-chip {
+      border: 1px solid var(--border-light);
+      background: var(--bg-alt);
+      color: var(--ink-muted);
+      padding: 5px 9px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: var(--font-ui);
+    }
+    .ask-chip:hover {
+      border-color: var(--ink);
+      color: var(--ink);
+      box-shadow: 2px 2px 0 0 var(--border);
+    }
+    .ask-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--ink-faint);
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+    .answer-card {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    .answer-text {
+      white-space: pre-wrap;
+      line-height: 1.7;
+      font-size: 15px;
+      color: var(--ink);
+    }
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .source-list {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      padding: 12px;
+    }
+    .source-item {
+      border-top: 1px solid var(--border-light);
+      padding: 9px 0;
+    }
+    .source-item:first-of-type { border-top: none; }
+    .source-label {
+      color: var(--ink-faint);
+      font: 11px var(--font-mono);
+      margin-bottom: 3px;
+    }
+    .source-title {
+      color: var(--ink);
+      font-weight: 700;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .source-preview {
+      color: var(--ink-muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 4px;
+    }
+    .chat-log {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .chat-msg {
+      border: 1px solid var(--border-light);
+      background: var(--bg);
+      padding: 12px;
+      max-width: 880px;
+      white-space: pre-wrap;
+      line-height: 1.6;
+    }
+    .chat-msg.user {
+      margin-left: auto;
+      border-color: var(--ink);
+      background: var(--bg-alt);
+    }
+    .chat-msg.assistant {
+      margin-right: auto;
+      border-left: 3px solid var(--accent);
+    }
+    .ask-composer {
+      position: sticky;
+      bottom: 0;
+      z-index: 5;
+      background: linear-gradient(to top, var(--bg) 80%, rgba(249,249,247,0));
+      padding-top: 8px;
+    }
+    .workbench-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 360px) 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .doc-list {
+      max-height: calc(100vh - 210px);
+      overflow: auto;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .doc-row {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 0;
+      border-bottom: 1px solid var(--border-light);
+      background: transparent;
+      padding: 10px 12px;
+      color: var(--ink);
+      cursor: pointer;
+      font-family: var(--font-ui);
+    }
+    .doc-row:hover, .doc-row.active { background: var(--bg-alt); }
+    .doc-title { font-size: 13px; font-weight: 700; line-height: 1.35; }
+    .doc-meta { color: var(--ink-faint); font: 10px var(--font-mono); margin-top: 3px; }
+    .report-layout {
+      display: grid;
+      grid-template-columns: minmax(220px, 320px) 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .report-output {
+      border: 1px solid var(--border);
+      background: var(--bg);
+      padding: 18px;
+      min-height: 220px;
+    }
+    .markdown-body {
+      color: var(--ink);
+      line-height: 1.7;
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+    .markdown-body > :first-child { margin-top: 0; }
+    .markdown-body > :last-child { margin-bottom: 0; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 {
+      color: var(--ink);
+      font-family: var(--font-display);
+      line-height: 1.2;
+      margin: 1.1em 0 0.45em;
+    }
+    .markdown-body h1 { font-size: 28px; }
+    .markdown-body h2 { font-size: 23px; }
+    .markdown-body h3 { font-size: 19px; }
+    .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 16px; }
+    .markdown-body p, .markdown-body ul, .markdown-body ol, .markdown-body blockquote, .markdown-body pre {
+      margin: 0 0 0.9em;
+    }
+    .markdown-body .table-wrap {
+      margin: 0 0 1em;
+      overflow-x: auto;
+      border: 1px solid var(--border-light);
+      background: var(--bg);
+    }
+    .markdown-body table {
+      width: 100%;
+      min-width: 720px;
+      border-collapse: collapse;
+      font: 13px var(--font-ui);
+      line-height: 1.45;
+    }
+    .markdown-body th,
+    .markdown-body td {
+      border: 1px solid var(--border-light);
+      padding: 9px 10px;
+      vertical-align: top;
+      text-align: left;
+    }
+    .markdown-body th {
+      background: var(--bg-alt);
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .markdown-body tbody tr:nth-child(even) td {
+      background: var(--bg-subtle);
+    }
+    .markdown-body ul, .markdown-body ol { padding-left: 1.4em; }
+    .markdown-body li + li { margin-top: 0.25em; }
+    .markdown-body blockquote {
+      border-left: 3px solid var(--accent);
+      padding-left: 12px;
+      color: var(--ink-muted);
+    }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      font-size: 0.92em;
+      background: var(--bg-alt);
+      padding: 0.08em 0.32em;
+    }
+    .markdown-body pre {
+      background: var(--bg-alt);
+      border: 1px solid var(--border-light);
+      padding: 12px;
+      overflow: auto;
+    }
+    .markdown-body pre code {
+      background: transparent;
+      padding: 0;
+      white-space: pre;
+    }
+    .markdown-body a {
+      color: var(--blue);
+      text-decoration: underline;
+    }
+    .markdown-scroll {
+      max-height: 55vh;
+      overflow: auto;
+      border: 1px solid var(--border-light);
+      background: var(--bg);
+      padding: 14px;
+    }
+    .config-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .config-item {
+      border: 1px solid var(--border-light);
+      padding: 12px;
+      background: var(--bg);
+    }
+    .config-label {
+      color: var(--ink-faint);
+      font: 10px var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .config-value {
+      color: var(--ink);
+      font: 13px var(--font-ui);
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+    }
+    @media (max-width: 720px) {
+      .view { padding: 14px; }
+      .tab-bar button { padding: 9px 12px; font-size: 10px; }
+      .ask-panel, .answer-card, .source-list { padding: 12px; }
+      .ask-input { min-height: 110px; font-size: 14px; }
+      .workbench-grid, .report-layout { grid-template-columns: 1fr; }
+      .doc-list { max-height: 260px; }
+    }
 
     .graph-container {
       display: flex;
@@ -886,7 +1181,13 @@
   </div>
 
   <div class="tab-bar" id="tab-bar">
-    <button class="active" data-tab="dashboard">Dashboard</button>
+    <button class="active" data-tab="ask">Chat</button>
+    <button data-tab="documents">Documents</button>
+    <button data-tab="research">Research Map</button>
+    <button data-tab="experiments">Experiments</button>
+    <button data-tab="suggestions">Questions</button>
+    <button data-tab="indexing">Indexing</button>
+    <button data-tab="dashboard">Dashboard</button>
     <button data-tab="graph">Graph</button>
     <button data-tab="memories">Memories</button>
     <button data-tab="timeline">Timeline</button>
@@ -902,7 +1203,13 @@
 
   <div id="flag-banners" class="flag-banners"></div>
 
-  <div id="view-dashboard" class="view active"></div>
+  <div id="view-ask" class="view active"></div>
+  <div id="view-documents" class="view"></div>
+  <div id="view-research" class="view"></div>
+  <div id="view-experiments" class="view"></div>
+  <div id="view-suggestions" class="view"></div>
+  <div id="view-indexing" class="view"></div>
+  <div id="view-dashboard" class="view"></div>
   <div id="view-graph" class="view"></div>
   <div id="view-memories" class="view"></div>
   <div id="view-lessons" class="view"></div>
@@ -929,6 +1236,8 @@
     <a id="footer-feedback" href="#" target="_blank" rel="noopener">report issue &rarr;</a>
   </footer>
 
+  <script src="/vendor/katex/katex.min.js"></script>
+  <script src="/vendor/katex/contrib/auto-render.min.js"></script>
   <script nonce="__AGENTMEMORY_VIEWER_NONCE__">
     var params = new URLSearchParams(window.location.search);
     var paramPort = params.get('port');
@@ -1004,8 +1313,14 @@
     var CB_STATE_COLORS = { closed: 'badge-green', open: 'badge-red', 'half-open': 'badge-yellow' };
 
     var state = {
-      activeTab: 'dashboard',
+      activeTab: 'ask',
       dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [] },
+      ask: { loaded: false, question: '', answer: null, messages: [], loading: false, error: '' },
+      documents: { loaded: false, items: [], selectedPath: '', selectedContent: '', summary: '', loading: false, error: '' },
+      research: { loaded: false, query: '', map: '', memories: [], loading: false, error: '' },
+      experiments: { loaded: false, query: '', report: '', memories: [], loading: false, error: '' },
+      suggestions: { loaded: false, query: '', suggestions: '', memories: [], loading: false, error: '' },
+      indexing: { loaded: false, status: null, rebuilding: false, buildingPapers: false, error: '', rebuildResult: null, paperBuildResult: null },
       graph: { loaded: false, nodes: [], edges: [], stats: null, filters: {}, selectedNode: null },
       memories: { loaded: false, items: [], search: '', typeFilter: '' },
       timeline: { loaded: false, observations: [], sessionId: '', minImportance: 0, page: 0, pageSize: 50 },
@@ -1026,6 +1341,183 @@
       var d = document.createElement('div');
       d.textContent = String(s);
       return d.innerHTML;
+    }
+    function renderInlineMarkdown(text) {
+      var html = esc(text || '');
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+      html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      return html;
+    }
+    function splitMarkdownTableRow(line) {
+      var normalized = String(line || '').trim();
+      if (!normalized) return [];
+      if (normalized[0] === '|') normalized = normalized.slice(1);
+      if (normalized[normalized.length - 1] === '|') normalized = normalized.slice(0, -1);
+      return normalized.split('|').map(function(cell) { return cell.trim(); });
+    }
+    function isMarkdownTableDelimiter(line) {
+      var cells = splitMarkdownTableRow(line);
+      if (!cells.length) return false;
+      return cells.every(function(cell) {
+        return /^:?-{3,}:?$/.test(cell);
+      });
+    }
+    function renderMarkdownTable(headerLine, alignLine, bodyLines) {
+      var headers = splitMarkdownTableRow(headerLine);
+      var aligns = splitMarkdownTableRow(alignLine).map(function(cell) {
+        if (/^:-+:$/.test(cell)) return 'center';
+        if (/^-+:$/.test(cell)) return 'right';
+        return 'left';
+      });
+      var html = '<div class="table-wrap"><table><thead><tr>';
+      headers.forEach(function(cell, i) {
+        html += '<th style="text-align:' + (aligns[i] || 'left') + ';">' + renderInlineMarkdown(cell) + '</th>';
+      });
+      html += '</tr></thead><tbody>';
+      bodyLines.forEach(function(line) {
+        var cells = splitMarkdownTableRow(line);
+        if (!cells.length) return;
+        html += '<tr>';
+        headers.forEach(function(_, i) {
+          html += '<td style="text-align:' + (aligns[i] || 'left') + ';">' + renderInlineMarkdown(cells[i] || '') + '</td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+      return html;
+    }
+    function renderMarkdown(text) {
+      if (!text) return '<div class="markdown-body"><p style="color:var(--ink-faint);">沒有內容。</p></div>';
+      var src = String(text).replace(/\r\n?/g, '\n');
+      var codeBlocks = [];
+      src = src.replace(/```([\s\S]*?)```/g, function(_, code) {
+        var token = '__CODE_BLOCK_' + codeBlocks.length + '__';
+        codeBlocks.push('<pre><code>' + esc(code.replace(/^\n+|\n+$/g, '')) + '</code></pre>');
+        return '\n' + token + '\n';
+      });
+      var lines = src.split('\n');
+      var html = [];
+      var para = [];
+      var inUl = false;
+      var inOl = false;
+      var inQuote = false;
+      function flushParagraph() {
+        if (!para.length) return;
+        html.push('<p>' + renderInlineMarkdown(para.join(' ')) + '</p>');
+        para = [];
+      }
+      function closeLists() {
+        if (inUl) { html.push('</ul>'); inUl = false; }
+        if (inOl) { html.push('</ol>'); inOl = false; }
+      }
+      function closeQuote() {
+        if (inQuote) { flushParagraph(); closeLists(); html.push('</blockquote>'); inQuote = false; }
+      }
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var trimmed = line.trim();
+        if (!trimmed) {
+          flushParagraph();
+          closeLists();
+          closeQuote();
+          continue;
+        }
+        var codeMatch = /^__CODE_BLOCK_(\d+)__$/.exec(trimmed);
+        if (codeMatch) {
+          flushParagraph();
+          closeLists();
+          closeQuote();
+          html.push(codeBlocks[parseInt(codeMatch[1], 10)] || '');
+          continue;
+        }
+        var nextTrimmed = i + 1 < lines.length ? lines[i + 1].trim() : '';
+        if (trimmed.indexOf('|') !== -1 && nextTrimmed && isMarkdownTableDelimiter(nextTrimmed)) {
+          var tableHeaderLine = line;
+          var tableAlignLine = lines[i + 1];
+          flushParagraph();
+          closeLists();
+          closeQuote();
+          var bodyLines = [];
+          i += 2;
+          while (i < lines.length) {
+            var bodyTrimmed = lines[i].trim();
+            if (!bodyTrimmed || bodyTrimmed.indexOf('|') === -1) {
+              i -= 1;
+              break;
+            }
+            bodyLines.push(lines[i]);
+            i += 1;
+          }
+          html.push(renderMarkdownTable(tableHeaderLine, tableAlignLine, bodyLines));
+          continue;
+        }
+        var heading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+        if (heading) {
+          flushParagraph();
+          closeLists();
+          closeQuote();
+          var level = heading[1].length;
+          html.push('<h' + level + '>' + renderInlineMarkdown(heading[2]) + '</h' + level + '>');
+          continue;
+        }
+        var quote = /^>\s?(.*)$/.exec(trimmed);
+        if (quote) {
+          flushParagraph();
+          closeLists();
+          if (!inQuote) { html.push('<blockquote>'); inQuote = true; }
+          para.push(quote[1]);
+          continue;
+        }
+        var ul = /^[-*+]\s+(.*)$/.exec(trimmed);
+        if (ul) {
+          flushParagraph();
+          if (!inUl) {
+            closeQuote();
+            if (inOl) { html.push('</ol>'); inOl = false; }
+            html.push('<ul>');
+            inUl = true;
+          }
+          html.push('<li>' + renderInlineMarkdown(ul[1]) + '</li>');
+          continue;
+        }
+        var ol = /^\d+\.\s+(.*)$/.exec(trimmed);
+        if (ol) {
+          flushParagraph();
+          if (!inOl) {
+            closeQuote();
+            if (inUl) { html.push('</ul>'); inUl = false; }
+            html.push('<ol>');
+            inOl = true;
+          }
+          html.push('<li>' + renderInlineMarkdown(ol[1]) + '</li>');
+          continue;
+        }
+        para.push(trimmed);
+      }
+      flushParagraph();
+      closeLists();
+      closeQuote();
+      return '<div class="markdown-body">' + html.join('') + '</div>';
+    }
+    function applyMath(root) {
+      if (!root || typeof renderMathInElement !== 'function') return;
+      try {
+        renderMathInElement(root, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false }
+          ],
+          throwOnError: false,
+          ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'option'],
+          ignoredClasses: ['no-math']
+        });
+      } catch (err) {
+        console.warn('[viewer] math render failed:', err);
+      }
     }
     function formatTime(ts) {
       if (!ts) return '';
@@ -1097,6 +1589,12 @@
     async function loadTab(tab) {
       switch(tab) {
         case 'dashboard': if (!state.dashboard.loaded) await loadDashboard(); break;
+        case 'ask': if (!state.ask.loaded) await loadAsk(); break;
+        case 'documents': if (!state.documents.loaded) await loadDocuments(); break;
+        case 'research': if (!state.research.loaded) await loadResearch(); break;
+        case 'experiments': if (!state.experiments.loaded) await loadExperiments(); break;
+        case 'suggestions': if (!state.suggestions.loaded) await loadSuggestions(); break;
+        case 'indexing': if (!state.indexing.loaded) await loadIndexing(); break;
         case 'graph': if (!state.graph.loaded) await loadGraph(); break;
         case 'memories': if (!state.memories.loaded) await loadMemories(); break;
         case 'timeline': if (!state.timeline.loaded) await loadTimeline(); break;
@@ -1450,7 +1948,7 @@
       if (state.graph.nodes.length === 0) {
         var sb = document.getElementById('graph-sidebar');
         if (sb) sb.innerHTML = '<h3>Graph</h3><p style="font-size:12px;color:var(--ink-faint);margin:8px 0;font-style:italic;">No graph data yet. Building from observations and memories...</p>';
-        var buildResult = await apiPost('graph/build', {});
+        var buildResult = await apiPost('graph/rebuild-from-memories', { limit: 500 });
         if (buildResult && buildResult.success && buildResult.nodes > 0) {
           var freshResults = await Promise.all([
             apiPost('graph/query', {}),
@@ -1805,8 +2303,8 @@
 
     async function rebuildGraph() {
       var sb = document.getElementById('graph-sidebar');
-      if (sb) sb.innerHTML = '<h3>Graph</h3><p style="font-size:12px;color:var(--ink-faint);font-style:italic;">Rebuilding graph from observations...</p>';
-      await apiPost('graph/build', {});
+      if (sb) sb.innerHTML = '<h3>Graph</h3><p style="font-size:12px;color:var(--ink-faint);font-style:italic;">Rebuilding graph from memories...</p>';
+      await apiPost('graph/rebuild-from-memories', { limit: 500 });
       state.graph.loaded = false;
       loadGraph();
     }
@@ -2074,6 +2572,317 @@
       state.memories.items = (result && result.memories) || [];
       state.memories.loaded = true;
       renderMemories();
+    }
+
+    async function loadAsk() {
+      state.ask.loaded = true;
+      renderAsk();
+    }
+
+    function renderAsk() {
+      var el = document.getElementById('view-ask');
+      var answer = state.ask.answer;
+      var examples = [
+        'RAG 實驗在講什麼？',
+        '協作污染的核心假設是什麼？',
+        '整理目前 benchmark 的結論',
+        '哪些文件跟 ToM 或信任有關？'
+      ];
+      var html = '';
+      html += '<div class="ask-shell">';
+      html += '<div class="chat-log">';
+      if (state.ask.messages.length === 0) {
+        html += '<div class="chat-msg assistant">你可以直接問這批 Markdown。回答會從 memory、KG 和來源片段組合，不只是關鍵字搜尋。</div>';
+      } else {
+        state.ask.messages.forEach(function(m) {
+          html += '<div class="chat-msg ' + esc(m.role) + '">' + esc(m.content || '') + '</div>';
+        });
+      }
+      html += '</div>';
+
+      if (state.ask.loading) {
+        html += '<div class="answer-card"><div class="loading">Searching memory and asking Gemini...</div></div>';
+      }
+
+      if (answer) {
+        html += '<div class="answer-card">';
+        html += '<div class="card-title">Answer</div>';
+        html += '<div class="answer-text">' + renderMarkdown(answer.answer || '') + '</div>';
+        html += '</div>';
+
+        var memories = answer.memories || [];
+        var graph = answer.graph || { nodes: [], edges: [] };
+        html += '<details class="source-list" open><summary class="card-title" style="cursor:pointer;">Sources · ' + memories.length + ' memories · ' + ((graph.nodes || []).length) + ' graph nodes</summary>';
+        html += '<div class="source-grid">';
+        html += '<div>';
+        if (memories.length === 0) {
+          html += '<div class="source-preview">No memories retrieved.</div>';
+        } else {
+          memories.slice(0, 8).forEach(function(m, i) {
+            html += '<div class="source-item">';
+            html += '<div class="source-label">M' + (i + 1) + ' ' + esc(m.id || '') + '</div>';
+            html += '<div class="source-title">' + esc(truncate(m.title || '', 90)) + '</div>';
+            html += '<div class="source-preview">' + esc(truncate(m.content || '', 280)) + '</div>';
+            html += '<button class="btn" style="font-size:9px;padding:2px 8px;margin-top:6px;" data-action="show-source" data-source-index="' + i + '">Open source</button>';
+            html += '</div>';
+          });
+        }
+        html += '</div><div>';
+        var nodes = graph.nodes || [];
+        var edges = graph.edges || [];
+        html += '<div class="ask-meta" style="margin-bottom:6px;"><span>' + nodes.length + ' nodes</span><span>' + edges.length + ' edges</span></div>';
+        if (nodes.length === 0) {
+          html += '<div class="source-preview">No graph nodes matched this question.</div>';
+        } else {
+          nodes.slice(0, 12).forEach(function(n, i) {
+            html += '<div class="source-item">';
+            html += '<div class="source-label">G' + (i + 1) + ' ' + esc(n.type || 'node') + '</div>';
+            html += '<div class="source-title">' + esc(truncate(n.name || n.id || '', 90)) + '</div>';
+            if (n.properties) html += '<div class="source-preview">' + esc(truncate(JSON.stringify(n.properties), 220)) + '</div>';
+            html += '</div>';
+          });
+        }
+        html += '</div></div></details>';
+      }
+      html += '<div class="ask-composer"><div class="ask-panel">';
+      html += '<textarea id="ask-question" class="ask-input" rows="4" placeholder="問你的 Markdown、記憶或知識圖譜..." autofocus>' + esc(state.ask.question) + '</textarea>';
+      html += '<div class="ask-examples">';
+      examples.forEach(function(ex) {
+        html += '<button type="button" class="ask-chip" data-action="ask-example" data-question="' + esc(ex) + '">' + esc(ex) + '</button>';
+      });
+      html += '</div>';
+      html += '<div class="ask-actions">';
+      html += '<div class="ask-meta"><span>Gemini</span><span>memory + graph</span><span>Ctrl/⌘ + Enter</span></div>';
+      html += '<div><button class="btn" data-action="ask-clear" type="button">Clear</button> <button class="btn btn-primary" id="ask-submit" data-action="ask-submit"' + (state.ask.loading ? ' disabled' : '') + '>' + (state.ask.loading ? 'Thinking...' : 'Send') + '</button></div>';
+      html += '</div>';
+      if (state.ask.error) {
+        html += '<div style="margin-top:10px;color:var(--red);font-size:12px;">' + esc(state.ask.error) + '</div>';
+      }
+      html += '</div></div>';
+      html += '</div>';
+
+      el.innerHTML = html;
+      applyMath(el);
+
+      var q = document.getElementById('ask-question');
+      if (q) {
+        q.addEventListener('input', function() {
+          state.ask.question = this.value;
+        });
+        q.addEventListener('keydown', function(e) {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            submitAsk();
+          }
+        });
+      }
+      var btn = document.getElementById('ask-submit');
+      if (btn) btn.addEventListener('click', submitAsk);
+    }
+
+    async function submitAsk() {
+      var question = (state.ask.question || '').trim();
+      if (!question || state.ask.loading) return;
+      state.ask.loading = true;
+      state.ask.error = '';
+      state.ask.messages.push({ role: 'user', content: question });
+      state.ask.question = '';
+      renderAsk();
+      var result = await apiPost('chat', { messages: state.ask.messages, limit: 8, includeGraph: true });
+      state.ask.loading = false;
+      if (!result) {
+        state.ask.error = 'Ask failed. Check that the LLM provider is configured and agentmemory is running.';
+      } else {
+        state.ask.answer = result;
+        state.ask.messages.push({ role: 'assistant', content: result.answer || '' });
+      }
+      renderAsk();
+    }
+
+    function showSource(index) {
+      var memories = (state.ask.answer && state.ask.answer.memories) || [];
+      var source = memories[index];
+      if (!source) return;
+      var modal = document.getElementById('modal');
+      modal.innerHTML =
+        '<h3>' + esc(source.title || source.id || 'Source') + '</h3>' +
+        '<div class="doc-meta" style="margin-bottom:10px;">' + esc(source.id || '') + '</div>' +
+        '<div class="markdown-scroll" style="max-height:60vh;">' + renderMarkdown(source.content || '') + '</div>' +
+        '<div class="modal-actions"><button class="btn" data-action="close-modal">Close</button></div>';
+      document.getElementById('modal-overlay').classList.add('open');
+      applyMath(modal);
+    }
+
+    async function loadDocuments() {
+      var el = document.getElementById('view-documents');
+      el.innerHTML = '<div class="loading">Loading documents...</div>';
+      var result = await apiGet('documents');
+      state.documents.items = (result && result.documents) || [];
+      state.documents.loaded = true;
+      renderDocuments();
+    }
+
+    function renderDocuments() {
+      var el = document.getElementById('view-documents');
+      var d = state.documents;
+      var html = '<div class="workbench-grid">';
+      html += '<div><div class="card-title">Markdown Documents · ' + d.items.length + '</div><div class="doc-list">';
+      d.items.forEach(function(doc) {
+        html += '<button class="doc-row' + (doc.path === d.selectedPath ? ' active' : '') + '" data-action="select-doc" data-doc-path="' + esc(doc.path) + '">';
+        html += '<div class="doc-title">' + esc(doc.title) + '</div>';
+        html += '<div class="doc-meta">' + esc(doc.path) + ' · ' + Math.round((doc.size || 0) / 1024) + ' KB · ' + (doc.memoryCount || 0) + ' memories</div>';
+        html += '</button>';
+      });
+      html += '</div></div>';
+      html += '<div class="answer-card">';
+      if (!d.selectedPath) {
+        html += '<div class="card-title">Document Preview</div><div class="source-preview">選左邊文件後，可以讀內容或讓 Gemini 摘要。</div>';
+      } else {
+        html += '<div class="card-title">' + esc(d.selectedPath) + '</div>';
+        html += '<div style="margin-bottom:10px;"><button class="btn btn-primary" data-action="summarize-doc"' + (d.loading ? ' disabled' : '') + '>' + (d.loading ? 'Summarizing...' : 'Summarize') + '</button></div>';
+        if (d.summary) html += '<div class="report-output" style="margin-bottom:12px;">' + renderMarkdown(d.summary) + '</div>';
+        html += '<div class="markdown-scroll">' + renderMarkdown(d.selectedContent || '') + '</div>';
+      }
+      if (d.error) html += '<div style="color:var(--red);font-size:12px;">' + esc(d.error) + '</div>';
+      html += '</div></div>';
+      el.innerHTML = html;
+      applyMath(el);
+    }
+
+    async function selectDocument(path) {
+      state.documents.selectedPath = path;
+      state.documents.summary = '';
+      state.documents.error = '';
+      renderDocuments();
+      var res = await apiGet('documents/read?path=' + encodeURIComponent(path));
+      if (res) state.documents.selectedContent = res.content || '';
+      else state.documents.error = 'Document read failed.';
+      renderDocuments();
+    }
+
+    async function summarizeDocument() {
+      if (!state.documents.selectedPath || state.documents.loading) return;
+      state.documents.loading = true;
+      state.documents.error = '';
+      renderDocuments();
+      var res = await apiPost('documents/summary', { path: state.documents.selectedPath });
+      state.documents.loading = false;
+      if (res) state.documents.summary = res.summary || '';
+      else state.documents.error = 'Summary failed.';
+      renderDocuments();
+    }
+
+    async function loadResearch() { state.research.loaded = true; renderReportTab('research'); }
+    async function loadExperiments() { state.experiments.loaded = true; renderReportTab('experiments'); }
+    async function loadSuggestions() { state.suggestions.loaded = true; renderReportTab('suggestions'); }
+
+    function renderReportTab(kind) {
+      var cfg = {
+        research: { title: 'Research Map', action: 'run-research', field: 'map', button: 'Build Map', placeholder: '可留空，或輸入主題，例如 RAG benchmark / ToM trust', endpoint: 'research-map' },
+        experiments: { title: 'Experiment Tracker', action: 'run-experiments', field: 'report', button: 'Extract Experiments', placeholder: '可留空，或輸入資料集/方法/benchmark', endpoint: 'experiments' },
+        suggestions: { title: 'Reverse Questions', action: 'run-suggestions', field: 'suggestions', button: 'Generate Questions', placeholder: '可留空，或輸入想被追問的主題', endpoint: 'suggestions' }
+      }[kind];
+      var s = state[kind];
+      var el = document.getElementById('view-' + kind);
+      var html = '<div class="report-layout">';
+      html += '<div class="ask-panel"><div class="card-title">' + cfg.title + '</div>';
+      html += '<textarea class="ask-input" rows="5" id="' + kind + '-query" placeholder="' + cfg.placeholder + '">' + esc(s.query || '') + '</textarea>';
+      html += '<div class="ask-actions"><div class="ask-meta"><span>memory retrieval</span><span>Gemini synthesis</span></div><button class="btn btn-primary" data-action="' + cfg.action + '"' + (s.loading ? ' disabled' : '') + '>' + (s.loading ? 'Running...' : cfg.button) + '</button></div>';
+      if (s.error) html += '<div style="color:var(--red);font-size:12px;margin-top:8px;">' + esc(s.error) + '</div>';
+      html += '</div>';
+      html += '<div class="report-output">' + (s[cfg.field] ? renderMarkdown(s[cfg.field]) : '<span style="color:var(--ink-faint);">尚未產生。</span>') + '</div>';
+      html += '</div>';
+      el.innerHTML = html;
+      applyMath(el);
+      var input = document.getElementById(kind + '-query');
+      if (input) input.addEventListener('input', function() { s.query = this.value; });
+    }
+
+    async function runReport(kind) {
+      var cfg = {
+        research: { endpoint: 'research-map', field: 'map' },
+        experiments: { endpoint: 'experiments', field: 'report' },
+        suggestions: { endpoint: 'suggestions', field: 'suggestions' }
+      }[kind];
+      var s = state[kind];
+      if (s.loading) return;
+      s.loading = true;
+      s.error = '';
+      renderReportTab(kind);
+      var res = await apiPost(cfg.endpoint, { query: s.query || undefined, limit: 30 });
+      s.loading = false;
+      if (res) {
+        s[cfg.field] = res[cfg.field] || '';
+        s.memories = res.memories || [];
+      } else {
+        s.error = 'Generation failed.';
+      }
+      renderReportTab(kind);
+    }
+
+    async function loadIndexing() {
+      var el = document.getElementById('view-indexing');
+      el.innerHTML = '<div class="loading">Loading index status...</div>';
+      state.indexing.status = await apiGet('index/status');
+      state.indexing.loaded = true;
+      renderIndexing();
+    }
+
+    function renderIndexing() {
+      var el = document.getElementById('view-indexing');
+      var s = state.indexing.status || {};
+      var keys = ['version', 'llmProvider', 'model', 'embeddingProvider', 'embeddingModel', 'embeddingDimensions', 'documents', 'memories', 'latestMemories', 'importedMarkdownRoot'];
+      var html = '<div class="answer-card"><div class="card-title">Index / Model Status</div><div class="config-list">';
+      keys.forEach(function(k) {
+        html += '<div class="config-item"><div class="config-label">' + esc(k) + '</div><div class="config-value">' + esc(s[k] === null || s[k] === undefined ? '' : s[k]) + '</div></div>';
+      });
+      html += '</div><div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">';
+      html += '<button class="btn btn-primary" data-action="build-papers-graph"' + (state.indexing.buildingPapers ? ' disabled' : '') + '>' + (state.indexing.buildingPapers ? 'Building papers graph...' : 'Build Papers Graph') + '</button>';
+      html += '<button class="btn btn-primary" data-action="rebuild-kg-from-memories"' + (state.indexing.rebuilding ? ' disabled' : '') + '>' + (state.indexing.rebuilding ? 'Rebuilding...' : 'Rebuild KG from memories') + '</button>';
+      html += '<button class="btn" data-action="refresh-indexing">Refresh</button></div>';
+      if (state.indexing.paperBuildResult) {
+        html += '<div class="report-output" style="margin-top:14px;">';
+        html += '<div class="card-title" style="margin-bottom:8px;">Paper Graph Build Result</div>';
+        html += '<pre style="margin:0;">' + esc(JSON.stringify(state.indexing.paperBuildResult, null, 2)) + '</pre>';
+        html += '</div>';
+      }
+      if (state.indexing.rebuildResult) {
+        html += '<div class="report-output" style="margin-top:14px;">';
+        html += '<div class="card-title" style="margin-bottom:8px;">KG Rebuild Result</div>';
+        html += '<pre style="margin:0;">' + esc(JSON.stringify(state.indexing.rebuildResult, null, 2)) + '</pre>';
+        html += '</div>';
+      }
+      if (state.indexing.error) html += '<div style="color:var(--red);font-size:12px;margin-top:8px;">' + esc(state.indexing.error) + '</div>';
+      html += '</div>';
+      el.innerHTML = html;
+      applyMath(el);
+    }
+
+    async function buildPapersGraph() {
+      if (state.indexing.buildingPapers) return;
+      state.indexing.buildingPapers = true;
+      state.indexing.error = '';
+      renderIndexing();
+      var res = await apiPost('graph/build-papers', { limit: 1000 });
+      state.indexing.buildingPapers = false;
+      if (res) state.indexing.paperBuildResult = res;
+      else state.indexing.error = 'Paper graph build failed.';
+      state.graph.loaded = false;
+      state.indexing.status = await apiGet('index/status');
+      renderIndexing();
+    }
+
+    async function rebuildKgFromMemories() {
+      if (state.indexing.rebuilding) return;
+      state.indexing.rebuilding = true;
+      state.indexing.error = '';
+      renderIndexing();
+      var res = await apiPost('graph/rebuild-from-memories', { limit: 500 });
+      state.indexing.rebuilding = false;
+      if (res) state.indexing.rebuildResult = res;
+      else state.indexing.error = 'KG rebuild failed.';
+      state.graph.loaded = false;
+      state.indexing.status = await apiGet('index/status');
+      renderIndexing();
     }
 
     function renderMemories() {
@@ -3484,6 +4293,64 @@
         refreshDashboard();
         return;
       }
+      if (action === 'ask-example') {
+        state.ask.question = target.getAttribute('data-question') || '';
+        state.ask.answer = null;
+        state.ask.error = '';
+        renderAsk();
+        var askInput = document.getElementById('ask-question');
+        if (askInput) askInput.focus();
+        return;
+      }
+      if (action === 'ask-submit') {
+        submitAsk();
+        return;
+      }
+      if (action === 'ask-clear') {
+        state.ask.messages = [];
+        state.ask.answer = null;
+        state.ask.question = '';
+        state.ask.error = '';
+        renderAsk();
+        return;
+      }
+      if (action === 'show-source') {
+        showSource(parseInt(target.getAttribute('data-source-index') || '0', 10));
+        return;
+      }
+      if (action === 'select-doc') {
+        selectDocument(target.getAttribute('data-doc-path') || '');
+        return;
+      }
+      if (action === 'summarize-doc') {
+        summarizeDocument();
+        return;
+      }
+      if (action === 'run-research') {
+        runReport('research');
+        return;
+      }
+      if (action === 'run-experiments') {
+        runReport('experiments');
+        return;
+      }
+      if (action === 'run-suggestions') {
+        runReport('suggestions');
+        return;
+      }
+      if (action === 'refresh-indexing') {
+        state.indexing.loaded = false;
+        loadIndexing();
+        return;
+      }
+      if (action === 'build-papers-graph') {
+        buildPapersGraph();
+        return;
+      }
+      if (action === 'rebuild-kg-from-memories') {
+        rebuildKgFromMemories();
+        return;
+      }
       if (action === 'zoom-graph') {
         zoomGraph(parseInt(target.getAttribute('data-dir') || '0', 10));
         return;
@@ -3778,7 +4645,7 @@
       else if (e.key === 'ArrowRight') { e.preventDefault(); stepReplay(1); }
     });
 
-    loadTab('dashboard');
+    loadTab(state.activeTab);
     connectWs();
     startDashboardAutoRefresh();
   </script>

@@ -79,6 +79,15 @@ function parseGraphXml(
   return { nodes, edges };
 }
 
+function normalizeGraphQueryText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[“”‘’"'`]/g, "")
+    .replace(/[？?！!。.,，:：;；()（）[\]{}<>]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function registerGraphFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -183,13 +192,33 @@ export function registerGraphFunction(
       const maxDepth = Math.min(data.maxDepth || 3, 5);
 
       if (data.query) {
-        const lower = data.query.toLowerCase();
+        const normalized = normalizeGraphQueryText(data.query);
+        const stripped = normalized
+          .replace(/請(?:簡短|簡單|詳細)?回答/g, " ")
+          .replace(/(?:是什麼|在講什麼|講什麼|內容是什麼|內容|介紹一下|摘要一下)/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
+        const terms = Array.from(new Set(
+          stripped
+            .split(/[^0-9a-z\u4e00-\u9fff._-]+/i)
+            .map((term) => term.trim())
+            .filter((term) => term.length >= 2),
+        ));
         const matchingNodes = allNodes.filter(
-          (n) =>
-            n.name.toLowerCase().includes(lower) ||
-            Object.values(n.properties).some(
-              (v) => typeof v === "string" && v.toLowerCase().includes(lower),
-            ),
+          (n) => {
+            const haystacks = [
+              normalizeGraphQueryText(n.name),
+              ...(n.aliases || []).map((alias) => normalizeGraphQueryText(alias)),
+              ...Object.values(n.properties).flatMap((v) =>
+                typeof v === "string" ? [normalizeGraphQueryText(v)] : [],
+              ),
+            ];
+            return haystacks.some((text) =>
+              text.includes(normalized) ||
+              text.includes(stripped) ||
+              terms.some((term) => text.includes(term)),
+            );
+          },
         );
         const nodeIds = new Set(matchingNodes.map((n) => n.id));
         const relatedEdges = allEdges.filter(

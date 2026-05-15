@@ -20,3 +20,9 @@ package-lock.json
 pnpm-lock.yaml
 yarn.lock
 integrations/hermes/__pycache__/
+
+# Local research imports and archives
+*.zip
+imported_markdown/*
+!imported_markdown/readpaper_md/
+!imported_markdown/readpaper_md/**
